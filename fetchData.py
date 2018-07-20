@@ -13,9 +13,9 @@ def getID():
 def fetchData(data, database, massive, server, user):
     try:
         #сделаю пока десяток
-        for answer in data[:500]:
+        for answer in data:
             ID = answer.select('*/ID').text
-            name = answer.select('*/Name').text
+            name = answer.select('*/Name').text.replace('×', '*')
             #ищем с1ид в базе
             с1id = lookForC1ID(database, ID)
             #если есть такой
@@ -24,13 +24,14 @@ def fetchData(data, database, massive, server, user):
                 #если названия разные
                     if str(с1id.data[0][6]).replace(' ', '') != str(name).replace(' ', ''):
                         #то добавить в массив
-                        massive.append([с1id.data[0][0],с1id.data[0][0], server,  user, с1id.data[0][5], name, 1 ])
+                        massive.append([с1id.data[0][0],с1id.data[0][0], server,  user, DateTime.Now, с1id.data[0][5], name, 1])
                         
             #если такого с1ид нет в базе            
             else:
                 #получаем ID доабвляем сразу в массив, [id ]
                 id_x = getID()
-                massive.append([ id_x,id_x, server, user, ID, name,   0 ])
+                massive.append([ id_x,id_x, server, user,  DateTime.Now, ID, name, 0])
+                
     except Exception as ex:
         script_output['message'] =  "fetchdata error" + traceback.format_exc()    
     
@@ -42,7 +43,7 @@ def lookForC1ID(database, c1id):
     return res
     
     
-def getDataMassive(namebook):
+def getDataMassive(database, namebook):
     try:
         
         #массив, куда накапаливаем строки
@@ -63,7 +64,7 @@ def getDataMassive(namebook):
         
         #парсинг XML
         data = op_result.select_all('//SimpleAnswer')
-        database = misbus.get_internal_remote('test-sql')
+        #database = misbus.get_internal_remote('test-sql')
         
         
         #сервер и юзер
@@ -103,46 +104,18 @@ def getTableStructure(database, table):
         script_output['message'] = "getTableStructure error" + traceback.format_exc()  
 
 
-def selectFromTable(database, tableName, ID):
-    try:
-        query = 'select * from {0} where id = @id'.format(tableName)
-        varss = database.execute_query(query, id=ID)
-        return varss
-    except Exception as ex:
-        script_output['select-Error'] = traceback.format_exc()
-        script_output['select - tableName'] = tableName
-        script_output['select - id'] = '/'.join(str(ord(c)) for c in str(ID))
+def selectFromTable(database, ID):
+    query = 'select * from _s_1c_Nomenklature where id = @id'
+    varss = database.execute_query(query, id=str(ID))
+    return varss
+    
     
 #select insert delete    
-def sid(database, tableName, ID):
-    try:
-        #берем строку по ID
-        values = selectFromTable(database, tableName, ID)
-        script_output['sid - values'] = "{0} / {1} / {2} / {3} / {4} / {5} / {6} ".format(values.data[0][0],values.data[0][1],values.data[0][2],values.data[0][3],values.data[0][4],values.data[0][5],values.data[0][6])
-        #Берем структуру таблицы
-        newvalues=[]
-        q=0
-        for i in values.data[0]:
-            if i!=4:
-                newvalues[q] = values.data[0][i]
-                q+=1
-        columnNames = getTableStructure(database, tableName)
-        script_output['sid - columns'] = columNames
-        #вставляем строку в резервную таблицу _d
-        insertDataInTable(database, tableName+'_d', columNames, newvalues)
-        #удаляем ту строку из таблицы
-        deleteDataFromTable(database, tableName, ID)
-    except Exception as ex:
-        script_output['sid-Error'] = traceback.format_exc()
-        script_output['sid - ID'] = ID
-        script_output['sid - tableName'] = tableName
+
         
 #вставить это элемент в *_d
 
-def insertSelectByID(database, tableNameInto, tableNameFrom, columNames, ID):
-    
-    columns = "".join((k) for k in columNames)
-    
+def insertSelectByID(database, ID):
     
     query = '''insert into {0} ({1})
                 select {2}
@@ -151,63 +124,62 @@ def insertSelectByID(database, tableNameInto, tableNameFrom, columNames, ID):
                 
 #убрать повторяющийся код
 def insertDataInTable(database, values):
-    query = ''' insert into _s_1c_Nomenklature (ID, ID1, ID_SERVER, ID_LOGIN, C1ID, NAME)
-                VALUES (@a, @b, @c, @d, @e, @f )'''
+    query = ''' insert into _s_1c_Nomenklature (ID, ID1, ID_SERVER, ID_LOGIN, DATETIME_C, C1ID, NAME)
+                VALUES (@a, @b, @c, @d, @e, @f, @g)'''
     
     data = database.execute_nonquery(query, 
-        a = values[0],
-        b = values[1],
+        a = str(values[0]),
+        b = str(values[1]),
         c = values[2],
         d = values[3],
         e = values[4],
-        f = values[5])
+        f = values[5],
+        g = values[6].replace('×', '*'))
     
     return data
     
 def insertDataInTableD(database, values):
+    query = ''' insert into _s_1c_Nomenklature_d(ID, ID1, ID_SERVER, ID_LOGIN, DATETIME_C,  C1ID, NAME)
+                    VALUES (@a, @b, @c, @d, @e, @f,  @g )'''
+        
+    data = database.execute_nonquery(query, 
+                a = str(values[0]),
+                b = str(values[1]),
+                c = values[2],
+                d = values[3],
+                e = values[4],
+                f = values[5],
+                g = values[6])
+    return data
     
-    query = ''' insert into _s_1c_Nomenklature_d (ID, ID1, ID_SERVER, ID_LOGIN, DATETIME_C,  C1ID, NAME)
-                VALUES (@a, @b, @c, @d, @e, @f,  @g )'''
-    try:
-        data = database.execute_nonquery(query, 
-            a = values[0],
-            b = values[1],
-            c = values[2],
-            d = values[3],
-            e = values[4],
-            f = values[5],
-            g = values[6])
-        
-        return data
-    except Exception as ex:
-        script_output['query'] = query
-        
-
+    
 #удалить элемент из таблицы
-def deleteDataFromTable(database, tableName, ID):
-    query = ''' DELETE FROM {0} WHERE ID=@id '''.format(tableName)
-    num = database.execute_nonquery(query, table=tableName, id=ID)  
+def deleteDataFromTable(database, ID):
+    
+    query = ''' DELETE FROM _s_1c_Nomenklature WHERE ID=@id '''
+    num = database.execute_nonquery(query, id=str(ID))  
     return num
-
+    
 
 bookname = script_input['bookname']    
-massive = getDataMassive(bookname)
+
 db = misbus.get_internal_remote('test-sql')
-tableName = '_s_1c_Nomenklature'
-massive.insert(4, DateTime.Now)
-for i,x in enumerate(massive):
-    insertDataInTableD(db, x)
-script_output['result'] = 'OK'    
-    
+massive = getDataMassive(db,bookname)
 
-
-    
-    
-
-    
-
-
+for i, row in enumerate(massive):
+    if row[7] == 1:
         
-
-
-    
+        script_output[str(i)+ "_ascii"] = ','.join(str(ord(c)) for c in row[6])
+        values = selectFromTable(db, row[0])
+        script_output[str(i)+ '_selected'] = " / ".join(str(k) for k in values.data[0])
+        
+        ins = insertDataInTableD(db,values.data[0])
+        script_output[str(i)+ 'inserted_in_D'] = ins
+        #удаляем ту строку из таблицы
+        num = deleteDataFromTable(db,  row[0])
+        script_output[str(i)+ '_deleted'] = num
+        
+    num = insertDataInTable(db, row)
+    script_output[str(i)+ '_insertedResult'] = num   
+        
+    script_output[str(i)] = " / ".join(str(k) for k in row)
