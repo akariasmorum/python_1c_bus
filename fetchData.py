@@ -10,79 +10,99 @@ def getID():
     return id_x
     
 #сопоставление данных
-def fetchData(data, database, massive, server, user):
-    try:
-        #сделаю пока десяток
-        for answer in data:
-            ID = answer.select('*/ID').text
-            name = answer.select('*/Name').text.replace('×', '*')
-            #ищем с1ид в базе
-            с1id = lookForC1ID(database, ID)
-            #если есть такой
-            if len(с1id.data)>0:
-                #то сравниваем с1ид с тем, что в базе
-                #если названия разные
-                    if str(с1id.data[0][6]).replace(' ', '') != str(name).replace(' ', ''):
-                        #то добавить в массив
-                        massive.append([с1id.data[0][0],с1id.data[0][0], server,  user, DateTime.Now, с1id.data[0][5], name, 1])
-                        
-            #если такого с1ид нет в базе            
-            else:
-                #получаем ID доабвляем сразу в массив, [id ]
-                id_x = getID()
-                massive.append([ id_x,id_x, server, user,  DateTime.Now, ID, name, 0])
-                
-    except Exception as ex:
-        script_output['message'] =  "fetchdata error" + traceback.format_exc()    
+def fetchData(xmlData, dbTable, insertMassive, substMassive, server, user):
+    inserted = 0
+    subtituted =0
+    db = misbus.get_internal_remote('test-sql')
+    #для каждого ответа в xml
+    for answer in xmlData:
+        CID = answer[0]
+        name = answer[1].replace('×', '*')
+        c1id = lookForItem(dbTable, CID)
+        
+        #если клид найден
+        if c1id is not None:
+            #сверить названия. если названия отличаются
+            if c1id[6].replace(' ', '')!=name.replace(' ', ''):
+                #добавить в массив на замену
+                insertDataInTableD(db,[c1id[0], c1id[1], c1id[2], c1id[3], c1id[4], getID(), server, user, DateTime.Now, 1, c1id[5], c1id[6]])
+                num=deleteDataFromTable(db, c1id[0])
+                script_output['fetch_delete-'+str(c1id[0])] = str(c1id[0])+" result:" + str(num)
+                idn = getID()
+                insertDataInTable(db, [idn,idn, server, user, DateTime.Now, CID, name] )
+                subtituted+=1
+        #иначе, если клида нет, то добавить в массив на вставку        
+        else:
+            id_x = str(getID())
+            insertDataInTable(db,[id_x, id_x, server, user,DateTime.Now, CID, name])
+            inserted+=1
+    script_output['inserted'] = inserted
+    script_output['substituted'] = subtituted
+    
+      
     
 # поиск с1id в базе. если нет, то len(res.data) = 0
-def lookForC1ID(database, c1id):
-    res = database.execute_query(''' 
-        select * from _s_1c_Nomenklature where C1ID=@c1id
-    ''', c1id = c1id )
-    return res
+def lookForItem(dbTable, c1id):
+    for row in dbTable:
+        if c1id in row:
+            return row
+            
+            
     
+    return None
     
-def getDataMassive(database, namebook):
-    try:
+def deletingMassive(delMassive,tableData, indexInTD,  xmlData, indexInXML, server, user):
+    db = misbus.get_internal_remote('test-sql')
+    deleted = 0
+    for i, val in enumerate(tableData):
+        #идем по второму
+        found = False
+        for k, val2 in enumerate(xmlData):
+            #если находим совпадения, то удаляем из первого массива
+            
+            if val[indexInTD] == val2[indexInXML]:
+                #если нашли такие данные во втором массиве
+                found = True
+                break
         
-        #массив, куда накапаливаем строки
-        massive = []
-        
-        #подключение к 1С
-        remote = misbus.get_external_remote(7)
-        operation = remote.get_operation("GetRefBook")
-        #Формирование пакета
-        
-        op_input = operation.build_input_envelope({
+        if found==False:
+            insertDataInTableD(db,[val[0], val[1], val[2], val[3], val[4], getID(), server, user, DateTime.Now, 0, val[5], val[6]])
+            script_output['deleted_'+str(deleted)] = " _ ".join(str(k) for k in val)
+            num = deleteDataFromTable(db, val[0])
+            script_output['deleted_'+str(deleted)+'result'] = num
+            deleted+=1
+            
+    script_output['deleted'] = deleted
+    
+def getDataMassive(db, namebook, insertMassive, subsMassive, delMassive):
+    remote = misbus.get_external_remote(7)
+    operation = remote.get_operation("GetRefBook")
+    #Формирование пакета
+    
+    dtable = db.execute_query("select * from _s_1c_Nomenklature").data
+    
+    op_input = operation.build_input_envelope({
             'name': "GetRefBook",
             'children': [
                 {'name': "RefBookName", 'text': namebook},
             ],
-        })
-        op_result = operation.execute_and_parse(op_input)
+            })
+    op_result = operation.execute_and_parse(op_input)
+    
+    #парсинг XML
+    xml = []
+    data = op_result.select_all('//SimpleAnswer')
+    
+    for answer in data:
+        xml.append([answer.select('*/ID').text, answer.select('*/Name').text])
         
-        #парсинг XML
-        data = op_result.select_all('//SimpleAnswer')
-        #database = misbus.get_internal_remote('test-sql')
+    user = db.execute_query('select id from _s_user where kod=1000').data[0][0]
+    server = db.execute_query('select top 1 ID_Server1 from _a_Option ').data[0][0]
+    
+    fetchData(xml, dtable, insertMassive, subsMassive, server, user)        
+    deletingMassive(delMassive, dtable,5, xml,0, server, user)  
+    
         
-        
-        #сервер и юзер
-        script = misbus.get_script(28)
-        result = script.call({})
-        user = result['user']
-        serv = result['server']
-        
-        
-        #сопоставление данных из XML с данными из БД, наполнение массива различиями
-        fetchData(data, database, massive, serv, user)
-        
-        return massive
-        
-    except Exception as ex:
-        script_output['message'] = "get data massive error" + traceback.format_exc()  
-        
-  
 #часть 2    
 
 
@@ -115,13 +135,7 @@ def selectFromTable(database, ID):
         
 #вставить это элемент в *_d
 
-def insertSelectByID(database, ID):
-    
-    query = '''insert into {0} ({1})
-                select {2}
-                from {3} 
-                where C1ID='e98f782f-5776-11e5-8a23-0015172adb1d' '''.format(tableNameInto, columns, columNames)
-                
+
 #убрать повторяющийся код
 def insertDataInTable(database, values):
     query = ''' insert into _s_1c_Nomenklature (ID, ID1, ID_SERVER, ID_LOGIN, DATETIME_C, C1ID, NAME)
@@ -139,8 +153,8 @@ def insertDataInTable(database, values):
     return data
     
 def insertDataInTableD(database, values):
-    query = ''' insert into _s_1c_Nomenklature_d(ID, ID1, ID_SERVER, ID_LOGIN, DATETIME_C,  C1ID, NAME)
-                    VALUES (@a, @b, @c, @d, @e, @f,  @g )'''
+    query = ''' insert into _s_1c_Nomenklature_d(ID, ID1, ID_SERVER, ID_LOGIN, DATETIME_C,ID_D, ID_SERVER_D, ID_LOGIN_D, DATETIME_D, TYPE_D,  C1ID, NAME)
+                    VALUES (@a, @b, @c, @d, @e, @f,  @g, @h, @i, @j, @k, @l )'''
         
     data = database.execute_nonquery(query, 
                 a = str(values[0]),
@@ -148,38 +162,46 @@ def insertDataInTableD(database, values):
                 c = values[2],
                 d = values[3],
                 e = values[4],
-                f = values[5],
-                g = values[6])
+                f = str(values[5]),
+                g = values[6],
+                h=values[7],
+                i=values[8],
+                j=values[9],
+                k=values[10],
+                l=values[11])
     return data
     
     
 #удалить элемент из таблицы
 def deleteDataFromTable(database, ID):
     
-    query = ''' DELETE FROM _s_1c_Nomenklature WHERE ID=@id '''
-    num = database.execute_nonquery(query, id=str(ID))  
+    query = ''' DELETE FROM _s_1c_Nomenklature WHERE ID=@idx '''
+    num = database.execute_nonquery(query, idx=str(ID))
+
     return num
+    
     
 
 bookname = script_input['bookname']    
 
 db = misbus.get_internal_remote('test-sql')
-massive = getDataMassive(db,bookname)
 
-for i, row in enumerate(massive):
-    if row[7] == 1:
+iM=[]
+sM=[]
+dM=[]
+
+getDataMassive(db,bookname,iM, sM, dM)
+
+
+script_output['result'] = "OK"
         
-        script_output[str(i)+ "_ascii"] = ','.join(str(ord(c)) for c in row[6])
-        values = selectFromTable(db, row[0])
-        script_output[str(i)+ '_selected'] = " / ".join(str(k) for k in values.data[0])
         
-        ins = insertDataInTableD(db,values.data[0])
-        script_output[str(i)+ 'inserted_in_D'] = ins
-        #удаляем ту строку из таблицы
-        num = deleteDataFromTable(db,  row[0])
-        script_output[str(i)+ '_deleted'] = num
+  
+
+    
+
+
         
-    num = insertDataInTable(db, row)
-    script_output[str(i)+ '_insertedResult'] = num   
-        
-    script_output[str(i)] = " / ".join(str(k) for k in row)
+
+
+    
