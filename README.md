@@ -1,2 +1,2 @@
 # python_1c_bus
-Скрипты, которые пишу для интеграции с 1с
+Clinic scripts for accounting integration
